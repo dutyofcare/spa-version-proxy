@@ -1,3 +1,5 @@
+![GitHub](https://img.shields.io/github/license/dutyofcare/spa-version-proxy.go)
+
 Single Page App Version Proxy
 ==============================
 
