@@ -32,7 +32,7 @@ func TestAppRewrite(t *testing.T) {
 }
 
 func TestVersionSwitch(t *testing.T) {
-	versionSwitch := VersionSwitch("default")
+	versionSwitch := VersionSwitch(func() string { return "default" })
 
 	for _, tc := range []struct {
 		name         string
