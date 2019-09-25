@@ -28,13 +28,11 @@ func main() {
 		Timeout: time.Second * 10,
 	}
 
-	var defaultVersionFunc func() string
-	if defaultVersion := os.Getenv(EnvVarPrefix + "DEFAULT_VERSION"); defaultVersion != "" {
-		defaultVersionFunc = func() string {
-			return defaultVersion
-		}
+	var defaultVersion StringReader
+	if specifiedDefaultVersion := os.Getenv(EnvVarPrefix + "DEFAULT_VERSION"); specifiedDefaultVersion != "" {
+		defaultVersion = normalStringReader(specifiedDefaultVersion)
 	} else {
-		defaultVersionFunc, err = defaultVersionPoller(sourceClient, sourceURLString+"/default-version.txt")
+		defaultVersion, err = defaultVersionPoller(sourceClient, sourceURLString+"/default-version.txt")
 		if err != nil {
 			log.Fatalf("Fetching default version: %s", err.Error())
 		}
@@ -52,7 +50,7 @@ func main() {
 		client:    sourceClient,
 	}
 
-	handler = VersionSwitch(defaultVersionFunc)(handler)
+	handler = VersionSwitch(defaultVersion)(handler)
 	handler = AppRewrite(handler)
 
 	bindAddress := os.Getenv(EnvVarPrefix + "BIND")
@@ -61,8 +59,39 @@ func main() {
 	}
 }
 
-func defaultVersionPoller(client *http.Client, url string) (func() string, error) {
-	mutex := sync.RWMutex{}
+type threadSafeString struct {
+	mutex sync.RWMutex
+	value string
+}
+
+// Write sets the value, and returns true if it changed.
+func (tss *threadSafeString) Write(val string) bool {
+	tss.mutex.Lock()
+	defer tss.mutex.Unlock()
+	if tss.value == val {
+		return false
+	}
+	tss.value = val
+	return true
+}
+
+func (tss *threadSafeString) Read() string {
+	tss.mutex.RLock()
+	defer tss.mutex.RUnlock()
+	return tss.value
+}
+
+type normalStringReader string
+
+func (str normalStringReader) Read() string {
+	return string(str)
+}
+
+type StringReader interface {
+	Read() string
+}
+
+func defaultVersionPoller(client *http.Client, url string) (StringReader, error) {
 
 	fetchVersion := func() (string, error) {
 		res, err := client.Get(url)
@@ -86,6 +115,10 @@ func defaultVersionPoller(client *http.Client, url string) (func() string, error
 	}
 	log.Printf("Default Version from source: '%s'", defaultVersion)
 
+	versionString := &threadSafeString{
+		value: defaultVersion,
+	}
+
 	go func() {
 		for {
 			newVersion, err := fetchVersion()
@@ -95,21 +128,15 @@ func defaultVersionPoller(client *http.Client, url string) (func() string, error
 				continue
 			}
 
-			mutex.Lock()
-			if defaultVersion != newVersion {
+			changed := versionString.Write(newVersion)
+			if changed {
 				log.Printf("Updating default version to '%s'", newVersion)
 			}
-			defaultVersion = newVersion
-			mutex.Unlock()
 			time.Sleep(time.Minute)
 		}
 	}()
 
-	return func() string {
-		mutex.RLock()
-		defer mutex.RUnlock()
-		return defaultVersion
-	}, nil
+	return versionString, nil
 }
 
 type fileServer struct {
@@ -207,7 +234,7 @@ const VersionCookieName = "version-override"
 // cookie. When the querystring parameter is set, the cookie is sent with the
 // response so that requests for resources in HTML pages (css, images etc) will
 // also get the correct prefix.
-func VersionSwitch(defaultVersion func() string) func(http.Handler) http.Handler {
+func VersionSwitch(defaultVersion StringReader) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 
@@ -243,7 +270,7 @@ func VersionSwitch(defaultVersion func() string) func(http.Handler) http.Handler
 				// by browsers when looking up cached responses)
 				rw.Header().Set("Cache-Control", "no-store")
 			} else {
-				version = defaultVersion()
+				version = defaultVersion.Read()
 			}
 
 			version = url.PathEscape(version)
