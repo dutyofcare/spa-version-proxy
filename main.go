@@ -187,7 +187,7 @@ func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request, nam
 	fullName := filepath.Join(string(fs.root), filepath.FromSlash(path.Clean("/"+name)))
 	// Done with http.Dir.Open clone
 
-	os.MkdirAll(filepath.Dir(fullName), os.FileMode(0777))
+	os.MkdirAll(filepath.Dir(fullName), os.FileMode(os.ModePerm))
 	cacheFile, err := os.Create(fullName)
 	if err != nil {
 		return err
