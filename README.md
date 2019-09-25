@@ -1,3 +1,5 @@
+[![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/dutyofcare/spa-version-proxy)](https://hub.docker.com/r/dutyofcare/spa-version-proxy)
+
 Single Page App Version Proxy
 ==============================
 
@@ -16,3 +18,9 @@ are also versioned (css, js etc)
 
 All requests without an extension, including directories, are assumed to be the
 app, so `/index.html` will be served
+
+Docker
+------
+
+[dutyofcare/spa-version-proxy](https://hub.docker.com/r/dutyofcare/spa-version-proxy)
+
