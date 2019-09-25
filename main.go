@@ -284,7 +284,6 @@ func doProxy(rw http.ResponseWriter, reqIn *http.Request, client *http.Client) e
 	if err != nil {
 		return err
 	}
-	reqIn.Body.Close()
 	defer resBack.Body.Close()
 
 	rwHeader := rw.Header()
