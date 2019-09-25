@@ -2,11 +2,9 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -134,13 +132,7 @@ func (fs fileServer) tryServeFile(rw http.ResponseWriter, req *http.Request, nam
 
 	// TODO: Discard and delete if cache is expired.
 
-	rwHeader := rw.Header()
-	for key, vals := range parsedResponse.Header {
-		for _, val := range vals {
-			rwHeader.Add(key, val)
-		}
-	}
-
+	copyHeaders(parsedResponse.Header, rw.Header())
 	rw.WriteHeader(parsedResponse.StatusCode)
 	_, err = io.Copy(rw, parsedResponse.Body)
 	return err
@@ -210,6 +202,14 @@ func AppRewrite(next http.Handler) http.Handler {
 	})
 }
 
+func copyHeaders(from, to http.Header) {
+	for headerName, headerValues := range from {
+		for _, headerValue := range headerValues {
+			to.Add(headerName, headerValue)
+		}
+	}
+}
+
 func doError(rw http.ResponseWriter, req *http.Request, err error) {
 	log.Printf("ERROR: %s", err.Error())
 	rw.WriteHeader(500)
@@ -222,78 +222,4 @@ func loadJSONFile(filename string, into interface{}) error {
 	}
 	defer f.Close()
 	return json.NewDecoder(f).Decode(into)
-}
-
-type ProxyConfig struct {
-	Prefix string `json:"prefix"`
-	Target string `json:"target"`
-}
-
-func ProxyPaths(configs []ProxyConfig) func(http.Handler) http.Handler {
-	var proxyClient = &http.Client{
-		Timeout: time.Second * 60,
-	}
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-			reqPath := req.URL.Path
-			for _, proxyPath := range configs {
-				if strings.HasPrefix(reqPath, proxyPath.Prefix) {
-					urlOut, err := url.Parse(proxyPath.Target)
-					if err != nil {
-						doError(rw, req, err)
-						return
-					}
-					urlOut.Path = reqPath
-					urlOut.RawQuery = req.URL.RawQuery
-					req.URL = urlOut
-					log.Printf("Dev Proxy to %s", urlOut.String())
-					if err := doProxy(rw, req, proxyClient); err != nil {
-						log.Printf("ERROR: %s", err.Error())
-						rw.WriteHeader(http.StatusBadGateway)
-					}
-					return
-				}
-			}
-
-			next.ServeHTTP(rw, req)
-		})
-	}
-}
-
-func doProxy(rw http.ResponseWriter, reqIn *http.Request, client *http.Client) error {
-	body, err := ioutil.ReadAll(reqIn.Body)
-	reqIn.Body.Close()
-	if err != nil {
-		return err
-	}
-	reqOut, err := http.NewRequest(reqIn.Method, reqIn.URL.String(), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-
-	for k, vs := range reqIn.Header {
-		if strings.ToLower(k) == "content-length" {
-			continue
-		}
-		for _, v := range vs {
-			reqOut.Header.Add(k, v)
-		}
-	}
-
-	resBack, err := client.Do(reqOut)
-	if err != nil {
-		return err
-	}
-	defer resBack.Body.Close()
-
-	rwHeader := rw.Header()
-	for k, vs := range resBack.Header {
-		for _, v := range vs {
-			rwHeader.Add(k, v)
-		}
-	}
-	rw.WriteHeader(resBack.StatusCode)
-
-	_, err = io.Copy(rw, resBack.Body)
-	return err
 }
