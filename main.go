@@ -45,7 +45,7 @@ func main() {
 
 	cacheDir := os.Getenv(EnvVarPrefix + "CACHE_DIR")
 	handler = fileServer{
-		root:      http.Dir(cacheDir),
+		root:      httpDir{Dir: http.Dir(cacheDir)},
 		sourceURL: sourceURL,
 		client:    sourceClient,
 	}
@@ -139,23 +139,46 @@ func defaultVersionPoller(client *http.Client, url string) (StringReader, error)
 	return versionString, nil
 }
 
+type httpDir struct {
+	http.Dir
+}
+
+func (d httpDir) Create(name string) (*os.File, error) {
+	// This function is a clone of the Open function in http.Dir, but for
+	// creating rather than opening read-only
+	// Begin Direct Copy
+	if filepath.Separator != '/' && strings.ContainsRune(name, filepath.Separator) {
+		return nil, errors.New("http: invalid character in file path")
+	}
+	dir := string(d.Dir)
+	if dir == "" {
+		dir = "."
+	}
+
+	fullName := filepath.Join(dir, filepath.FromSlash(path.Clean("/"+name)))
+	// End Direct Copy
+
+	os.MkdirAll(filepath.Dir(fullName), os.ModePerm)
+	return os.Create(fullName)
+}
+
 type fileServer struct {
-	root      http.Dir
+	root      httpDir
 	sourceURL *url.URL
 	client    *http.Client
 }
 
 func (fs fileServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	rw.Header().Set("X-Cache", "hit")
-	name := path.Clean(req.URL.Path)
-	err := fs.tryServeFile(rw, req, name)
+	req.URL.Path = path.Clean(req.URL.Path)
+	err := fs.tryServeFile(rw, req)
 	if os.IsNotExist(err) {
 		rw.Header().Set("X-Cache", "miss")
-		if err := fs.doCacheFetch(rw, req, name); err != nil {
+		if err := fs.doCacheFetch(rw, req); err != nil {
 			doError(rw, req, err)
 			return
 		}
-		if err := fs.tryServeFile(rw, req, name); err != nil {
+		if err := fs.tryServeFile(rw, req); err != nil {
 			doError(rw, req, err)
 			return
 		}
@@ -165,12 +188,12 @@ func (fs fileServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request, name string) error {
+func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request) error {
 	// TODO: Exclusive Lock - Will multiple concurrent fetches corrupt the file
 	// or error out?
 
 	urlOut := &url.URL{
-		Path:   path.Join(fs.sourceURL.Path, name),
+		Path:   path.Join(fs.sourceURL.Path, req.URL.Path),
 		Scheme: fs.sourceURL.Scheme,
 		Host:   fs.sourceURL.Host,
 	}
@@ -180,15 +203,7 @@ func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request, nam
 		return err
 	}
 
-	//  Taken from http.Dir.Open
-	if filepath.Separator != '/' && strings.ContainsRune(name, filepath.Separator) {
-		return errors.New("http: invalid character in file path")
-	}
-	fullName := filepath.Join(string(fs.root), filepath.FromSlash(path.Clean("/"+name)))
-	// Done with http.Dir.Open clone
-
-	os.MkdirAll(filepath.Dir(fullName), os.ModePerm)
-	cacheFile, err := os.Create(fullName)
+	cacheFile, err := fs.root.Create(req.URL.Path)
 	if err != nil {
 		return err
 	}
@@ -198,9 +213,9 @@ func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request, nam
 
 }
 
-func (fs fileServer) tryServeFile(rw http.ResponseWriter, req *http.Request, name string) error {
+func (fs fileServer) tryServeFile(rw http.ResponseWriter, req *http.Request) error {
 	// http.Dir.Open ensures the file is rooted at root.
-	f, err := fs.root.Open(name)
+	f, err := fs.root.Open(req.URL.Path)
 	if err != nil {
 		return err
 	}
