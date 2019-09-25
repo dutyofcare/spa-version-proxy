@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +28,16 @@ func main() {
 		Timeout: time.Second * 10,
 	}
 
+	var defaultVersion StringReader
+	if specifiedDefaultVersion := os.Getenv(EnvVarPrefix + "DEFAULT_VERSION"); specifiedDefaultVersion != "" {
+		defaultVersion = normalStringReader(specifiedDefaultVersion)
+	} else {
+		defaultVersion, err = defaultVersionPoller(sourceClient, sourceURLString+"/default-version.txt")
+		if err != nil {
+			log.Fatalf("Fetching default version: %s", err.Error())
+		}
+	}
+
 	sourceURL, err := url.Parse(sourceURLString)
 	if err != nil {
 		log.Fatalf("Invalid url in $%sSOURCE: %s", EnvVarPrefix, err.Error())
@@ -37,7 +50,6 @@ func main() {
 		client:    sourceClient,
 	}
 
-	defaultVersion := os.Getenv(EnvVarPrefix + "DEFAULT_VERSION")
 	handler = VersionSwitch(defaultVersion)(handler)
 	handler = AppRewrite(handler)
 
@@ -45,6 +57,86 @@ func main() {
 	if err := http.ListenAndServe(bindAddress, handler); err != nil {
 		log.Fatal(err.Error())
 	}
+}
+
+type threadSafeString struct {
+	mutex sync.RWMutex
+	value string
+}
+
+// Write sets the value, and returns true if it changed.
+func (tss *threadSafeString) Write(val string) bool {
+	tss.mutex.Lock()
+	defer tss.mutex.Unlock()
+	if tss.value == val {
+		return false
+	}
+	tss.value = val
+	return true
+}
+
+func (tss *threadSafeString) Read() string {
+	tss.mutex.RLock()
+	defer tss.mutex.RUnlock()
+	return tss.value
+}
+
+type normalStringReader string
+
+func (str normalStringReader) Read() string {
+	return string(str)
+}
+
+type StringReader interface {
+	Read() string
+}
+
+func defaultVersionPoller(client *http.Client, url string) (StringReader, error) {
+
+	fetchVersion := func() (string, error) {
+		res, err := client.Get(url)
+		if err != nil {
+			return "", err
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			return "", fmt.Errorf("HTTP %s getting version", res.Status)
+		}
+		versionBytes, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(versionBytes)), nil
+	}
+
+	defaultVersion, err := fetchVersion()
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("Default Version from source: '%s'", defaultVersion)
+
+	versionString := &threadSafeString{
+		value: defaultVersion,
+	}
+
+	go func() {
+		for {
+			newVersion, err := fetchVersion()
+			if err != nil {
+				log.Println(err.Error())
+				time.Sleep(time.Second * 5)
+				continue
+			}
+
+			changed := versionString.Write(newVersion)
+			if changed {
+				log.Printf("Updating default version to '%s'", newVersion)
+			}
+			time.Sleep(time.Minute)
+		}
+	}()
+
+	return versionString, nil
 }
 
 type fileServer struct {
@@ -142,7 +234,7 @@ const VersionCookieName = "version-override"
 // cookie. When the querystring parameter is set, the cookie is sent with the
 // response so that requests for resources in HTML pages (css, images etc) will
 // also get the correct prefix.
-func VersionSwitch(defaultVersion string) func(http.Handler) http.Handler {
+func VersionSwitch(defaultVersion StringReader) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 
@@ -178,7 +270,7 @@ func VersionSwitch(defaultVersion string) func(http.Handler) http.Handler {
 				// by browsers when looking up cached responses)
 				rw.Header().Set("Cache-Control", "no-store")
 			} else {
-				version = defaultVersion
+				version = defaultVersion.Read()
 			}
 
 			version = url.PathEscape(version)
