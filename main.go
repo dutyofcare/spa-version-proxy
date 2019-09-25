@@ -169,6 +169,11 @@ type fileServer struct {
 }
 
 func (fs fileServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	if req.Method != "GET" {
+		rw.WriteHeader(http.StatusMethodNotAllowed)
+		rw.Write([]byte("Method Not Allowed"))
+		return
+	}
 	rw.Header().Set("X-Cache", "hit")
 	req.URL.Path = path.Clean(req.URL.Path)
 	err := fs.tryServeFile(rw, req)
