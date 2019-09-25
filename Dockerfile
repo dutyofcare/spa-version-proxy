@@ -1,7 +1,12 @@
-FROM golang:1.13
+FROM golang:1.13 as builder
 COPY *.go ./
 RUN go test *.go
-RUN go build -o /proxy-server ./main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /proxy-server ./main.go
+
+FROM alpine:latest  
+RUN apk --no-cache add ca-certificates
+
+COPY --from=builder /proxy-server /
 
 ENV CRA_PROXY_CACHE_DIR=/cache
 RUN mkdir -p /cache
