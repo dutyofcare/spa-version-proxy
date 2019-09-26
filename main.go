@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +53,15 @@ func main() {
 
 	handler = VersionSwitch(defaultVersion)(handler)
 	handler = AppRewrite(handler)
+	handler = Logger(handler)
+
+	if proxyConfigFile := os.Getenv(EnvVarPrefix + "DEV_PATHS"); proxyConfigFile != "" {
+		proxyConfig := []ProxyConfig{}
+		if err := loadJSONFile(proxyConfigFile, &proxyConfig); err != nil {
+			log.Fatalf("Loading Proxy Config %s", err.Error())
+		}
+		handler = ProxyPaths(proxyConfig)(handler)
+	}
 
 	bindAddress := os.Getenv(EnvVarPrefix + "BIND")
 	if err := http.ListenAndServe(bindAddress, handler); err != nil {
@@ -235,13 +245,7 @@ func (fs fileServer) tryServeFile(rw http.ResponseWriter, req *http.Request) err
 
 	// TODO: Discard and delete if cache is expired.
 
-	rwHeader := rw.Header()
-	for key, vals := range parsedResponse.Header {
-		for _, val := range vals {
-			rwHeader.Add(key, val)
-		}
-	}
-
+	copyHeaders(parsedResponse.Header, rw.Header())
 	rw.WriteHeader(parsedResponse.StatusCode)
 	_, err = io.Copy(rw, parsedResponse.Body)
 	return err
@@ -311,7 +315,24 @@ func AppRewrite(next http.Handler) http.Handler {
 	})
 }
 
+func copyHeaders(from, to http.Header) {
+	for headerName, headerValues := range from {
+		for _, headerValue := range headerValues {
+			to.Add(headerName, headerValue)
+		}
+	}
+}
+
 func doError(rw http.ResponseWriter, req *http.Request, err error) {
 	log.Printf("ERROR: %s", err.Error())
 	rw.WriteHeader(500)
+}
+
+func loadJSONFile(filename string, into interface{}) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return json.NewDecoder(f).Decode(into)
 }
