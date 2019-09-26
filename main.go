@@ -53,6 +53,7 @@ func main() {
 
 	handler = VersionSwitch(defaultVersion)(handler)
 	handler = AppRewrite(handler)
+	handler = Logger(handler)
 
 	if proxyConfigFile := os.Getenv(EnvVarPrefix + "DEV_PATHS"); proxyConfigFile != "" {
 		proxyConfig := []ProxyConfig{}
