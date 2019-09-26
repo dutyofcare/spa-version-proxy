@@ -1,5 +1,5 @@
 [![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/dutyofcare/spa-version-proxy)](https://hub.docker.com/r/dutyofcare/spa-version-proxy)
-![GitHub](https://img.shields.io/github/license/dutyofcare/spa-version-proxy.go)
+![GitHub](https://img.shields.io/github/license/dutyofcare/spa-version-proxy)
 
 Single Page App Version Proxy
 ==============================
