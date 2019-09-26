@@ -20,7 +20,7 @@ func Logger(next http.Handler) http.Handler {
 		recorder := &responseRecorder{ResponseWriter: responseWriter}
 		next.ServeHTTP(recorder, request)
 
-		fmt.Printf(`%s - - [%s] "%s" %d %s DurationSeconds:%f MappedPath:%s Cache:%s`,
+		fmt.Printf("%s - - [%s] \"%s\" %d %s DurationSeconds:%f MappedPath:%s Cache:%s\n",
 			request.RemoteAddr,
 			begin.Format(commonLogFormatDateTimeFormat),
 			requestLogLine,
