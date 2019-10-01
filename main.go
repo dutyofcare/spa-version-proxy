@@ -33,7 +33,7 @@ func main() {
 	if specifiedDefaultVersion := os.Getenv(EnvVarPrefix + "DEFAULT_VERSION"); specifiedDefaultVersion != "" {
 		defaultVersion = normalStringReader(specifiedDefaultVersion)
 	} else {
-		defaultVersion, err = defaultVersionPoller(sourceClient, sourceURLString+"/default-version.txt")
+		defaultVersion, err = defaultVersionPoller(sourceClient, sourceURLString)
 		if err != nil {
 			log.Fatalf("Fetching default version: %s", err.Error())
 		}
@@ -43,6 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Invalid url in $%sSOURCE: %s", EnvVarPrefix, err.Error())
 	}
+	sourceURL.Path = path.Join(sourceURL.Path, "versions")
 
 	cacheDir := os.Getenv(EnvVarPrefix + "CACHE_DIR")
 	handler = fileServer{
@@ -101,10 +102,15 @@ type StringReader interface {
 	Read() string
 }
 
-func defaultVersionPoller(client *http.Client, url string) (StringReader, error) {
+func defaultVersionPoller(client *http.Client, urlString string) (StringReader, error) {
+	fetchURL, err := url.Parse(urlString)
+	if err != nil {
+		return nil, err
+	}
+	fetchURL.Path = path.Join(fetchURL.Path, "default-version.txt")
 
 	fetchVersion := func() (string, error) {
-		res, err := client.Get(url)
+		res, err := client.Get(fetchURL.String())
 		if err != nil {
 			return "", err
 		}
@@ -189,7 +195,12 @@ func (fs fileServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	err := fs.tryServeFile(rw, req)
 	if os.IsNotExist(err) {
 		rw.Header().Set("X-Cache", "miss")
-		if err := fs.doCacheFetch(rw, req); err != nil {
+		if err := fs.doCacheFetch(req.URL.Path); err != nil {
+			if err == NotFoundError && req.URL.Path != "/" {
+				rw.WriteHeader(404)
+				rw.Write([]byte("404 Page Not Found"))
+				return
+			}
 			doError(rw, req, err)
 			return
 		}
@@ -203,12 +214,14 @@ func (fs fileServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request) error {
+var NotFoundError = errors.New("Not Found")
+
+func (fs fileServer) doCacheFetch(urlPath string) error {
 	// TODO: Exclusive Lock - Will multiple concurrent fetches corrupt the file
 	// or error out?
 
 	urlOut := &url.URL{
-		Path:   path.Join(fs.sourceURL.Path, req.URL.Path),
+		Path:   path.Join(fs.sourceURL.Path, urlPath),
 		Scheme: fs.sourceURL.Scheme,
 		Host:   fs.sourceURL.Host,
 	}
@@ -218,7 +231,14 @@ func (fs fileServer) doCacheFetch(rw http.ResponseWriter, req *http.Request) err
 		return err
 	}
 
-	cacheFile, err := fs.root.Create(req.URL.Path)
+	if res.StatusCode == 404 || res.StatusCode == 403 {
+		// 403 is S3's version of 404 in many cases.
+		return NotFoundError
+	} else if res.StatusCode != 200 {
+		return fmt.Errorf("HTTP %s fetching from source", res.Status)
+	}
+
+	cacheFile, err := fs.root.Create(urlPath)
 	if err != nil {
 		return err
 	}
