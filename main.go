@@ -284,21 +284,34 @@ func VersionSwitch(defaultVersion StringReader) func(http.Handler) http.Handler 
 
 			var version string
 			if queryVersion := req.URL.Query().Get("version"); queryVersion != "" {
-				// read the requested version from the QS
-				version = queryVersion
 
-				// Set a cookie so that dependencies are also loaded with the
-				// correct version
-				versionCookie := &http.Cookie{
-					Name: VersionCookieName,
-					// Allowing JS code to view and modify could extend
-					// functionality.
-					HttpOnly: false,
-					Path:     "/",
-					Expires:  time.Now().Add(time.Hour),
-					Value:    version,
+				if queryVersion == "default" {
+					version = defaultVersion.Read()
+					versionCookie := &http.Cookie{
+						Name:     VersionCookieName,
+						Value:    version,
+						Path:     "/",
+						MaxAge:   0,
+						HttpOnly: false,
+					}
+					http.SetCookie(rw, versionCookie)
+				} else {
+					// read the requested version from the QS
+					version = queryVersion
+
+					// Set a cookie so that dependencies are also loaded with the
+					// correct version
+					versionCookie := &http.Cookie{
+						Name: VersionCookieName,
+						// Allowing JS code to view and modify could extend
+						// functionality.
+						HttpOnly: false,
+						Path:     "/",
+						Expires:  time.Now().Add(time.Hour),
+						Value:    version,
+					}
+					http.SetCookie(rw, versionCookie)
 				}
-				http.SetCookie(rw, versionCookie)
 
 				// Don't cacne versioned entry points
 				rw.Header().Set("Cache-Control", "no-store")
