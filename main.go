@@ -273,6 +273,18 @@ func (fs fileServer) tryServeFile(rw http.ResponseWriter, req *http.Request) err
 
 const VersionCookieName = "version-override"
 
+func buildVersionCookie(version string) *http.Cookie {
+	return &http.Cookie{
+		Name: VersionCookieName,
+		// Allowing JS code to view and modify could extend
+		// functionality.
+		HttpOnly: false,
+		Path:     "/",
+		Expires:  time.Now().Add(time.Hour),
+		Value:    version,
+	}
+}
+
 // VersionSwitch rewrites requests to a directory prefixed with the requested
 // or default version.  The version can be set with a querystirng version= or
 // cookie. When the querystring parameter is set, the cookie is sent with the
@@ -287,13 +299,9 @@ func VersionSwitch(defaultVersion StringReader) func(http.Handler) http.Handler 
 
 				if queryVersion == "default" {
 					version = defaultVersion.Read()
-					versionCookie := &http.Cookie{
-						Name:     VersionCookieName,
-						Value:    version,
-						Path:     "/",
-						MaxAge:   0,
-						HttpOnly: false,
-					}
+					versionCookie := buildVersionCookie(version)
+					versionCookie.Expires = time.Time{}
+					versionCookie.MaxAge = 0
 					http.SetCookie(rw, versionCookie)
 				} else {
 					// read the requested version from the QS
@@ -301,26 +309,18 @@ func VersionSwitch(defaultVersion StringReader) func(http.Handler) http.Handler 
 
 					// Set a cookie so that dependencies are also loaded with the
 					// correct version
-					versionCookie := &http.Cookie{
-						Name: VersionCookieName,
-						// Allowing JS code to view and modify could extend
-						// functionality.
-						HttpOnly: false,
-						Path:     "/",
-						Expires:  time.Now().Add(time.Hour),
-						Value:    version,
-					}
+					versionCookie := buildVersionCookie(version)
 					http.SetCookie(rw, versionCookie)
 				}
 
 				// Don't cacne versioned entry points
 				rw.Header().Set("Cache-Control", "no-store")
-			} else if versionCookie, _ := req.Cookie(VersionCookieName); versionCookie != nil {
+			} else if versionRequestCookie, _ := req.Cookie(VersionCookieName); versionRequestCookie != nil {
 				// read the requested version from the cookie
-				version = versionCookie.Value
+				version = versionRequestCookie.Value
 
 				// refresh the cookie
-				versionCookie.Expires = time.Now().Add(time.Hour)
+				versionCookie := buildVersionCookie(version)
 				http.SetCookie(rw, versionCookie)
 
 				// Don't cache versioned resources (Cookies are not considered
