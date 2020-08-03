@@ -33,7 +33,11 @@ func main() {
 	if specifiedDefaultVersion := os.Getenv(EnvVarPrefix + "DEFAULT_VERSION"); specifiedDefaultVersion != "" {
 		defaultVersion = normalStringReader(specifiedDefaultVersion)
 	} else {
-		defaultVersion, err = defaultVersionPoller(sourceClient, sourceURLString)
+		filename := "default-version.txt"
+		if specifiedFilename := os.Getenv(EnvVarPrefix + "VERSION_PATH"); specifiedFilename != "" {
+			filename = specifiedFilename
+		}
+		defaultVersion, err = defaultVersionPoller(sourceClient, sourceURLString, filename)
 		if err != nil {
 			log.Fatalf("Fetching default version: %s", err.Error())
 		}
@@ -102,12 +106,12 @@ type StringReader interface {
 	Read() string
 }
 
-func defaultVersionPoller(client *http.Client, urlString string) (StringReader, error) {
+func defaultVersionPoller(client *http.Client, urlString, filename string) (StringReader, error) {
 	fetchURL, err := url.Parse(urlString)
 	if err != nil {
 		return nil, err
 	}
-	fetchURL.Path = path.Join(fetchURL.Path, "default-version.txt")
+	fetchURL.Path = path.Join(fetchURL.Path, filename)
 
 	fetchVersion := func() (string, error) {
 		res, err := client.Get(fetchURL.String())
